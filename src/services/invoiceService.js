@@ -302,6 +302,7 @@ async function resolveInvoiceContext(payload, env) {
     quality_adjustment_invoice_line_id: clean(row.id),
     quality_adjustment_description: clean(row.line_text || row.description_invoice),
     quality_adjustment_unit_price: clean(row.unit_price),
+    quality_adjustment_vat: clean(row.vat),
     quality_adjustment_pre_vat_total: clean(row.pre_vat_total),
     quality_adjustment_vat_amount: clean(row.vat_amount),
   }));
@@ -309,6 +310,7 @@ async function resolveInvoiceContext(payload, env) {
     other_invoice_line_id: clean(row.id),
     other_invoice_line_description: clean(row.line_text || row.description_invoice),
     other_invoice_line_unit_price: clean(row.unit_price),
+    other_invoice_line_vat: clean(row.vat),
     other_invoice_line_pre_vat_total: clean(row.pre_vat_total),
     other_invoice_line_vat_amount: clean(row.vat_amount),
   }));
