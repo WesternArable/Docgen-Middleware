@@ -11,6 +11,7 @@ const fieldPaths = [
   'Instruction__c',
   'Sampler__c.Name',
   'Account__c.Name',
+  'Variety__c.Name',
 ];
 
 function map(data) {
@@ -18,6 +19,7 @@ function map(data) {
   const sampler = data.Sampler__c || root.Sampler__c || {};
   const account = data.Account__c || root.Account__c || {};
   const commodity = data.Commodity__c || root.Commodity__c || {};
+  const variety = data.Variety__c || root.Variety__c || {};
   return {
     'Sample_Instruction__c.Name': root.Name ?? '',
     'Sample_Instruction__c.Date__c': root.Date__c ?? '',
@@ -31,6 +33,7 @@ function map(data) {
     'Account__c.Name': account.Name ?? '',
     'Sampler.Name': sampler.Name ?? '',
     'Account.Name': account.Name ?? '',
+    'Variety__c.Name': variety.Name ?? '',
   };
 }
 

@@ -62,10 +62,18 @@ function normalizeSalesforceId(value) {
   return core.toLowerCase();
 }
 
-function purchaseInvoiceLineIdFromQaRecord(record) {
-  const raw = record?.Purchase_Invoice_Line_ID__c;
-  if (raw && typeof raw === 'object' && raw.Id) return clean(raw.Id);
-  return clean(raw);
+function invoiceLineIdsFromQaRecord(record) {
+  const ids = [];
+  for (const raw of [
+    record?.Sales_Invoice_Line_ID__c,
+    record?.Purchase_Invoice_Line_ID__c,
+  ]) {
+    let id = '';
+    if (raw && typeof raw === 'object' && raw.Id) id = clean(raw.Id);
+    else id = clean(raw);
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 /** Picklist API value may differ from label "Commodity". */
@@ -127,9 +135,10 @@ async function fetchQualityAdjustmentsByInvoiceLineIds(invoiceLineIds, env) {
   if (!Array.isArray(invoiceLineIds) || invoiceLineIds.length === 0) return [];
   const inClause = invoiceLineIds.map((id) => `'${escapeSoqlLiteral(id)}'`).join(', ');
   const soql = [
-    'SELECT Id, Purchase_Invoice_Line_ID__c',
+    'SELECT Id, Sales_Invoice_Line_ID__c, Purchase_Invoice_Line_ID__c',
     'FROM Quality_Adjustment__c',
-    `WHERE Purchase_Invoice_Line_ID__c IN (${inClause})`,
+    `WHERE Sales_Invoice_Line_ID__c IN (${inClause})`,
+    `OR Purchase_Invoice_Line_ID__c IN (${inClause})`,
   ].join(' ');
   const data = await querySalesforce(soql, env);
   return Array.isArray(data?.records) ? data.records : [];
@@ -263,7 +272,10 @@ async function resolveInvoiceContext(payload, env) {
     env
   );
   const qaLinkedIds = new Set(
-    qaRecords.map((r) => normalizeSalesforceId(purchaseInvoiceLineIdFromQaRecord(r))).filter(Boolean)
+    qaRecords
+      .flatMap((r) => invoiceLineIdsFromQaRecord(r))
+      .map((id) => normalizeSalesforceId(id))
+      .filter(Boolean)
   );
   const templateRows = rows.map(enrichInvoiceLineRowForTemplate);
   const visibleTemplateRows = templateRows.filter(
@@ -272,6 +284,7 @@ async function resolveInvoiceContext(payload, env) {
   const ignoredTemplateRows = templateRows.filter((row) =>
     qaLinkedIds.has(normalizeSalesforceId(row.id))
   );
+  // Tonnage is commodity-only; QA table itself must include every linked line type.
   const ignoredCommodityQaRows = ignoredTemplateRows.filter((row) =>
     isCommodityPiLineType(row.pi_line_type)
   );
@@ -279,14 +292,25 @@ async function resolveInvoiceContext(payload, env) {
   const visibleCommodityRows = visibleTemplateRows.filter((row) =>
     isCommodityPiLineType(row.pi_line_type)
   );
+  // Non-commodity lines that are not QA-linked (e.g. Weighbridge Charge).
+  const otherInvoiceLineRowsSource = visibleTemplateRows.filter(
+    (row) => !isCommodityPiLineType(row.pi_line_type)
+  );
   const first = visibleCommodityRows[0] || visibleTemplateRows[0] || {};
   const firstCommodity = visibleCommodityRows[0] || {};
-  const qualityAdjustmentRows = ignoredCommodityQaRows.map((row) => ({
+  const qualityAdjustmentRows = ignoredTemplateRows.map((row) => ({
     quality_adjustment_invoice_line_id: clean(row.id),
-    quality_adjustment_description: clean(row.description_invoice || row.line_text),
+    quality_adjustment_description: clean(row.line_text || row.description_invoice),
     quality_adjustment_unit_price: clean(row.unit_price),
     quality_adjustment_pre_vat_total: clean(row.pre_vat_total),
     quality_adjustment_vat_amount: clean(row.vat_amount),
+  }));
+  const otherInvoiceLineRows = otherInvoiceLineRowsSource.map((row) => ({
+    other_invoice_line_id: clean(row.id),
+    other_invoice_line_description: clean(row.line_text || row.description_invoice),
+    other_invoice_line_unit_price: clean(row.unit_price),
+    other_invoice_line_pre_vat_total: clean(row.pre_vat_total),
+    other_invoice_line_vat_amount: clean(row.vat_amount),
   }));
   const recalculatedPreVatPurchase = commodityRows.reduce(
     (acc, row) => acc + numericOrZero(row.pre_vat_total),
@@ -304,6 +328,8 @@ async function resolveInvoiceContext(payload, env) {
   const columsSingle = first && Object.keys(first).length > 0 ? [first] : [];
   const context = {
     invoice_line_rows: visibleCommodityRows,
+    all_invoice_line_rows: visibleTemplateRows,
+    all_invoice_line_rows_count: visibleTemplateRows.length,
     invoice_line_rows_count: visibleCommodityRows.length,
     colums: visibleCommodityRows,
     colums_count: visibleCommodityRows.length,
@@ -314,7 +340,9 @@ async function resolveInvoiceContext(payload, env) {
     description_invoice: buildDescriptionInvoice(first),
     description: buildDescriptionInvoice(first),
     quality_adjustment_rows: qualityAdjustmentRows,
-    quality_adjustment_rows_count: ignoredCommodityQaRows.length,
+    quality_adjustment_rows_count: ignoredTemplateRows.length,
+    other_invoice_line_rows: otherInvoiceLineRows,
+    other_invoice_line_rows_count: otherInvoiceLineRows.length,
     'Invoice__c.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
     'Invoice__c.Tonnage__c': formatSummedNumber(recalculatedTonnage),
     'Invoice.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
@@ -402,10 +430,16 @@ async function resolveInvoiceContext(payload, env) {
     });
   });
 
-  ignoredCommodityQaRows.forEach((row, idx) => {
+  ignoredTemplateRows.forEach((row, idx) => {
     const i = idx + 1;
     context[`quality_adjustment_pre_vat_total_${i}`] = clean(row.pre_vat_total);
     context[`quality_adjustment_invoice_line_id_${i}`] = clean(row.id);
+  });
+
+  otherInvoiceLineRowsSource.forEach((row, idx) => {
+    const i = idx + 1;
+    context[`other_invoice_line_pre_vat_total_${i}`] = clean(row.pre_vat_total);
+    context[`other_invoice_line_id_${i}`] = clean(row.id);
   });
 
   return context;
