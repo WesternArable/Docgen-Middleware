@@ -36,6 +36,18 @@ function formatSummedNumber(n) {
   return String(rounded);
 }
 
+const UNSIGNED_LINE_TYPE_SLUGS = new Set([
+  'h_g_c_a_levy',
+  'a_h_d_b_levy',
+  'credit_insurance_levy',
+  'weighbridge',
+]);
+
+function formatLineTypeSum(slug, n) {
+  const displayValue = UNSIGNED_LINE_TYPE_SLUGS.has(slug) ? Math.abs(n) : n;
+  return formatSummedNumber(displayValue);
+}
+
 function numericOrZero(value) {
   const n = parseNumeric(value);
   return n === null ? 0 : n;
@@ -239,16 +251,26 @@ function buildLineTypeSumTags(rows) {
     const slug = lineTypeToTagSlug(lineType);
     if (!slug) continue;
     tags[`invoice_line_type_${slug}_unit_price_sum`] = sums.hadUnitPrice
-      ? formatSummedNumber(sums.unit_price_sum)
+      ? formatLineTypeSum(slug, sums.unit_price_sum)
       : '';
     tags[`invoice_line_type_${slug}_amount_sum`] = sums.hadPreVat
-      ? formatSummedNumber(sums.pre_vat_total_sum)
+      ? formatLineTypeSum(slug, sums.pre_vat_total_sum)
       : '';
     tags[`invoice_line_type_${slug}_vat_sum`] = sums.hadVatAmount
-      ? formatSummedNumber(sums.vat_amount_sum)
+      ? formatLineTypeSum(slug, sums.vat_amount_sum)
       : '';
   }
+  mirrorLineTypeSumTags(tags, 'h_g_c_a_levy', 'a_h_d_b_levy');
   return tags;
+}
+
+function mirrorLineTypeSumTags(tags, fromSlug, toSlug) {
+  for (const suffix of ['unit_price_sum', 'amount_sum', 'vat_sum']) {
+    const fromKey = `invoice_line_type_${fromSlug}_${suffix}`;
+    const toKey = `invoice_line_type_${toSlug}_${suffix}`;
+    if (tags[fromKey] && !tags[toKey]) tags[toKey] = tags[fromKey];
+    else if (tags[toKey] && !tags[fromKey]) tags[fromKey] = tags[toKey];
+  }
 }
 
 async function resolveInvoiceContext(payload, env) {
@@ -318,6 +340,10 @@ async function resolveInvoiceContext(payload, env) {
     (acc, row) => acc + numericOrZero(row.pre_vat_total),
     0
   );
+  const recalculatedLinesTotal = rows.reduce(
+    (acc, row) => acc + numericOrZero(row.pre_vat_total),
+    0
+  );
   const ignoredCommodityQty = ignoredCommodityQaRows.reduce(
     (acc, row) => acc + numericOrZero(row.quantity),
     0
@@ -346,8 +372,10 @@ async function resolveInvoiceContext(payload, env) {
     other_invoice_line_rows: otherInvoiceLineRows,
     other_invoice_line_rows_count: otherInvoiceLineRows.length,
     'Invoice__c.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
+    'Invoice__c.Total_Due_1__c': formatSummedNumber(recalculatedLinesTotal),
     'Invoice__c.Tonnage__c': formatSummedNumber(recalculatedTonnage),
     'Invoice.Pre_VAT_Total_Purchase__c': formatSummedNumber(recalculatedPreVatPurchase),
+    'Invoice.Total_Due_1__c': formatSummedNumber(recalculatedLinesTotal),
     'Invoice.Tonnage__c': formatSummedNumber(recalculatedTonnage),
     Invoice_Line__c: {
       Haulier__c: { Name: first.haulier_name || '' },

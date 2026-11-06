@@ -105,6 +105,53 @@ function wrapSourceResult(resolved, recordId, objectApiName, targetRoot) {
 
 const SOQL_IN_MAX = 200;
 
+function invalidSoqlColumn(error) {
+  const data = error?.response?.data;
+  const text = Array.isArray(data)
+    ? data.map((item) => item?.message || '').join('\n')
+    : '';
+  const match = text.match(/No such column '([^']+)'/i);
+  return match ? match[1] : '';
+}
+
+function pathUsesColumn(path, column) {
+  const soqlPath = toSoqlPath(path);
+  if (soqlPath === column || path === column) return true;
+  const columnName = String(column).split('.').pop();
+  return (
+    soqlPath === columnName ||
+    soqlPath.endsWith(`.${columnName}`) ||
+    path === columnName ||
+    path.endsWith(`.${columnName}`)
+  );
+}
+
+async function querySourceRecords(objectApiName, ids, fieldPaths, env) {
+  let paths = fieldPaths.slice();
+  const maxAttempts = Math.max(paths.length, 1);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const soqlFields = paths.map((path) => toSoqlPath(path));
+    const inList = ids.map((id) => `'${escapeSoqlLiteral(id)}'`).join(', ');
+    const soql = [
+      `SELECT Id, ${soqlFields.join(', ')}`,
+      `FROM ${objectApiName}`,
+      `WHERE Id IN (${inList})`,
+    ].join(' ');
+    try {
+      const queryResult = await querySalesforce(soql, env);
+      return { queryResult, fieldPaths: paths, soqlFields };
+    } catch (error) {
+      const column = invalidSoqlColumn(error);
+      if (!column) throw error;
+      const next = paths.filter((path) => !pathUsesColumn(path, column));
+      if (next.length === paths.length) throw error;
+      paths = next;
+      if (paths.length === 0) throw error;
+    }
+  }
+  throw new Error(`Unable to query ${objectApiName} source fields`);
+}
+
 async function resolveAutoSourceData(payload, env) {
   const resolver = payload?.dataResolver || payload?.sourceResolver || {};
   const objectApiName = cleanText(
@@ -119,15 +166,12 @@ async function resolveAutoSourceData(payload, env) {
   if (!objectApiName || idList.length === 0 || fieldPaths.length === 0) return {};
 
   const ids = idList.slice(0, SOQL_IN_MAX);
-  const soqlFields = fieldPaths.map((path) => toSoqlPath(path));
-  const inList = ids.map((id) => `'${escapeSoqlLiteral(id)}'`).join(', ');
-  const soql = [
-    `SELECT Id, ${soqlFields.join(', ')}`,
-    `FROM ${objectApiName}`,
-    `WHERE Id IN (${inList})`,
-  ].join(' ');
-
-  const queryResult = await querySalesforce(soql, env);
+  const { queryResult, fieldPaths: queriedPaths, soqlFields } = await querySourceRecords(
+    objectApiName,
+    ids,
+    fieldPaths,
+    env
+  );
   const sfRecords = Array.isArray(queryResult?.records) ? queryResult.records : [];
   const byId = new Map(sfRecords.map((r) => [r.Id, r]));
   const orderedSf = ids.map((id) => byId.get(id)).filter(Boolean);
@@ -136,7 +180,7 @@ async function resolveAutoSourceData(payload, env) {
 
   const multiResults = orderedSf.map((sfRec) =>
     wrapSourceResult(
-      buildResolvedFromSalesforceRecord(sfRec, fieldPaths, soqlFields),
+      buildResolvedFromSalesforceRecord(sfRec, queriedPaths, soqlFields),
       sfRec.Id,
       objectApiName,
       targetRoot

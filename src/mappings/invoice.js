@@ -72,6 +72,16 @@ function map(data) {
   const root = data.Invoice__c || data || {};
   const movementSheet = data.Movement_Sheet__c || root.Movement_Sheet__c || {};
   const contractLookup = data.Contract_Lookup__c || root.Contract_Lookup__c || {};
+  const movementSheetLinked = Boolean(
+    cleanText(movementSheet.Id) ||
+    cleanText(movementSheet.Name) ||
+    (typeof root.Movement_Sheet__c === 'string' && cleanText(root.Movement_Sheet__c)) ||
+    (typeof data.Movement_Sheet__c === 'string' && cleanText(data.Movement_Sheet__c))
+  );
+  const contractNumber = cleanText(contractLookup.Name);
+  const buyerReference = !movementSheetLinked && contractNumber
+    ? contractNumber
+    : (movementSheet.Buyer_Reference__c ?? '');
   const contractLookupAccount =
     data.Account__c ||
     contractLookup.Account__c ||
@@ -103,7 +113,7 @@ function map(data) {
     'Invoice.Tonnage__c': root.Tonnage__c ?? '',
 
     'Movement_Sheet__c.Name': movementSheet.Name ?? '',
-    'Movement_Sheet__c.Buyer_Reference__c': movementSheet.Buyer_Reference__c ?? '',
+    'Movement_Sheet__c.Buyer_Reference__c': buyerReference,
 
     'Contract_Lookup__c.Name': contractLookup.Name ?? '',
     'Contract_Lookup__c.Grower__c.Name': contractLookup?.Grower__c?.Name ?? '',

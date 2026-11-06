@@ -10,9 +10,34 @@ function formatDate(date) {
   });
 }
 
+function decodeHtmlEntities(text) {
+  let out = String(text);
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = out
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&quot;/gi, '"')
+      .replace(/&apos;/gi, "'")
+      .replace(/&#0*39;/g, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&#(\d+);/g, (entity, digits) => {
+        const code = Number(digits);
+        return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : entity;
+      })
+      .replace(/&#x([0-9a-f]+);/gi, (entity, hex) => {
+        const code = Number.parseInt(hex, 16);
+        return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : entity;
+      })
+      .replace(/&amp;/gi, '&');
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 function sanitizeText(text) {
   if (!text) return '';
-  return text
+  return decodeHtmlEntities(text)
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/\t/g, '\u00A0\u00A0\u00A0\u00A0')

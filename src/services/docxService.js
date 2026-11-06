@@ -14,6 +14,7 @@ const { resolveFooterContext } = require('./footerService');
 const { resolveSampleResultContext } = require('./sampleResultService');
 const { resolveInvoiceContext } = require('./invoiceService');
 const { getMappingByObjectApiName } = require('../mappings');
+const { resolveGrowerInfo } = require('../mappings/contract');
 
 function deepMerge(base, override) {
   if (!base || typeof base !== 'object' || Array.isArray(base)) return override;
@@ -103,9 +104,15 @@ async function generateDocx(payload) {
   }
 
   const autoSourceData = await resolveAutoSourceData(payloadWithResolver, env);
+  const mergedSourceData = deepMerge(autoSourceData || {}, (payload && payload.sourceData) || {});
+  const sourceData = await resolveGrowerInfo(
+    mergedSourceData,
+    env,
+    payloadWithResolver.objectApiName || payloadWithResolver.objectType
+  );
   const payloadWithAutoSource = {
     ...payloadWithResolver,
-    sourceData: deepMerge(autoSourceData || {}, (payload && payload.sourceData) || {}),
+    sourceData,
   };
   const resolvedFieldsData = resolveFieldsData(payloadWithAutoSource);
   const {

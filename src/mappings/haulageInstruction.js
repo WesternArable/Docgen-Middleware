@@ -27,9 +27,57 @@ const fieldPaths = [
   'Booking_Reference_No__c',
   'Delivery_Instruction__c.Date_Created__c',
   'Delivery_Instruction__c.Delivery_Reference_No__c',
+  'Delivery_Instruction__c.Use_Alternative_Delivery_Address__c',
+  'Delivery_Instruction__c.Display_Address__c',
+  'Delivery_Instruction__c.Alternative_Delivery_Address__c',
+  'Delivery_Instruction__c.Invoice_Account__c.Name',
+  'Delivery_Instruction__c.Invoice_Address__c',
   'Haulage_Rate__c',
   'Movement_Sheet__c.Name',
 ];
+
+function isChecked(value) {
+  if (value === true) return true;
+  const raw = String(value ?? '').trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
+function collapseAddressLines(value) {
+  return String(value ?? '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function hasOwn(obj, key) {
+  return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function buildDeliveredTo(deliveryInstruction) {
+  const di = deliveryInstruction || {};
+  const hasSource =
+    hasOwn(di, 'Use_Alternative_Delivery_Address__c') ||
+    hasOwn(di, 'Display_Address__c') ||
+    hasOwn(di, 'Alternative_Delivery_Address__c') ||
+    hasOwn(di, 'Invoice_Address__c') ||
+    (di.Invoice_Account__c && typeof di.Invoice_Account__c === 'object');
+  if (!hasSource) return null;
+
+  if (isChecked(di.Use_Alternative_Delivery_Address__c)) {
+    const address = hasOwn(di, 'Display_Address__c')
+      ? di.Display_Address__c
+      : di.Alternative_Delivery_Address__c;
+    return collapseAddressLines(address);
+  }
+
+  const accountName = String(di.Invoice_Account__c?.Name ?? '').trim();
+  const address = collapseAddressLines(di.Invoice_Address__c);
+  return [accountName, address].filter(Boolean).join('\n');
+}
 
 function deliveryRowFromSourceEntry(entry) {
   const hiRoot = entry.Haulage_Instruction__c || entry || {};
@@ -94,7 +142,8 @@ function map(data) {
     'Haulage_Instruction__c.Variety__c': varietyName,
     'Haulage_Instruction__c.Commodity__c': commodityName,
     'Haulage_Instruction__c.Tonnage__c': root.Tonnage__c ?? '',
-    'Haulage_Instruction__c.Buyer__c': root.Buyer__c ?? '',
+    'Haulage_Instruction__c.Buyer__c':
+      buildDeliveredTo(deliveryInstruction) ?? root.Buyer__c ?? '',
     'Haulage_Instruction__c.Haulage_Rate__c': root.Haulage_Rate__c ?? '',
     'Haulage_Instruction__c.Booking_Reference_No__c': root.Booking_Reference_No__c ?? '',
     'Haulage_Instruction__c.Delivery_Date__c': formatDateDdMmYyyy(root.Delivery_Date__c ?? ''),
